@@ -93,3 +93,61 @@ func (s sortableOutputSlice) Less(i, j int) bool {
 	}
 	return s[i].Value < s[j].Value
 }
+
+func InPlaceContextualSort(tx *wire.MsgTx, ctxts [][]byte) {
+	sort.Sort(sortableInputSlice(tx.TxIn))
+	sort.Sort(makeSortableOutputContextSlice(tx.TxOut, ctxts))
+}
+
+func ContextualSort(tx *wire.MsgTx, ctxts [][]byte) *wire.MsgTx {
+	txCopy := tx.Copy()
+	sort.Sort(sortableInputSlice(txCopy.TxIn))
+	sort.Sort(makeSortableOutputContextSlice(tx.TxOut, ctxts))
+	return txCopy
+}
+
+func IsContextualSorted(tx *wire.MsgTx, ctxts [][]byte) bool {
+	if !sort.IsSorted(sortableInputSlice(tx.TxIn)) {
+		return false
+	}
+	if !sort.IsSorted(makeSortableOutputContextSlice(tx.TxOut, ctxts)) {
+		return false
+	}
+	return true
+}
+
+type txOutWithContext struct {
+	*wire.TxOut
+	Context []byte
+}
+
+func makeSortableOutputContextSlice(
+	txouts []*wire.TxOut, ctxts [][]byte) sortableOutputContextSlice {
+
+	contextualOutputs := make(sortableOutputContextSlice, len(txouts))
+	for i, txout := range txouts {
+		contextualOutputs[i] = txOutWithContext{
+			TxOut:   txout,
+			Context: ctxts[i],
+		}
+	}
+
+	return contextualOutputs
+}
+
+type sortableOutputContextSlice []txOutWithContext
+
+func (s sortableOutputContextSlice) Len() int      { return len(s) }
+func (s sortableOutputContextSlice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
+func (s sortableOutputContextSlice) Less(i, j int) bool {
+	if s[i].Value != s[j].Value {
+		return s[i].Value < s[j].Value
+	}
+
+	pkScriptCmp := bytes.Compare(s[i].PkScript, s[j].PkScript)
+	if pkScriptCmp != 0 {
+		return pkScriptCmp == -1
+	}
+
+	return bytes.Compare(s[i].Context, s[j].Context) == -1
+}
