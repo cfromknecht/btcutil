@@ -94,11 +94,30 @@ func (s sortableOutputSlice) Less(i, j int) bool {
 	return s[i].Value < s[j].Value
 }
 
+// InPlaceContextualSort modifies the passed transaction inputs and outputs to
+// be sorted based on a _contextual_ BIP 69. Sorting occurs as defined in BIP
+// 69, and uses a contextual byte slice as a tie breaker if two outputs are
+// otherwise identical in value and pubkey script.
+//
+// WARNING: This function must NOT be called with published transactions since
+// it will mutate the transaction if it's not already sorted.  This can cause
+// issues if you mutate a tx in a block, for example, which would invalidate the
+// block.  It could also cause cached hashes, such as in a btcutil.Tx to become
+// invalidated.
+//
+// The function should only be used if the caller is creating the transaction or
+// is otherwise 100% positive mutating will not cause adverse affects due to
+// other dependencies.
 func InPlaceContextualSort(tx *wire.MsgTx, ctxts [][]byte) {
 	sort.Sort(sortableInputSlice(tx.TxIn))
 	sort.Sort(makeSortableOutputContextSlice(tx.TxOut, ctxts))
 }
 
+// ContextualSort returns a new transaction with the inputs and outputs sorted
+// based on _contextual_ BIP 69. Sorting occurs as defined in BIP 69, and uses
+// a contextual byte slice as a tie breaker if two outputs are otherwise
+// identical in value and pubkey script. The passed transaction is not modified
+// and the new transaction might have a different hash if any sorting was done.
 func ContextualSort(tx *wire.MsgTx, ctxts [][]byte) *wire.MsgTx {
 	txCopy := tx.Copy()
 	sort.Sort(sortableInputSlice(txCopy.TxIn))
@@ -106,6 +125,8 @@ func ContextualSort(tx *wire.MsgTx, ctxts [][]byte) *wire.MsgTx {
 	return txCopy
 }
 
+// IsContextualSorted checks whether tx has inputs and outputs sorted according
+// a _contextual_ BIP 69 sort.
 func IsContextualSorted(tx *wire.MsgTx, ctxts [][]byte) bool {
 	if !sort.IsSorted(sortableInputSlice(tx.TxIn)) {
 		return false
@@ -121,9 +142,17 @@ type txOutWithContext struct {
 	Context []byte
 }
 
+// makeSortableOutputContextSlice zips a slice of txouts with it's contexts so
+// that the outputs can be sorted using a contextual BIP 69 sort.
 func makeSortableOutputContextSlice(
 	txouts []*wire.TxOut, ctxts [][]byte) sortableOutputContextSlice {
 
+	if len(txouts) != len(ctxts) {
+		panic("length of txouts and contexts must be equal")
+	}
+
+	// Create a txOutWithContext that marries each txout to it's contextual
+	// byte slice.
 	contextualOutputs := make(sortableOutputContextSlice, len(txouts))
 	for i, txout := range txouts {
 		contextualOutputs[i] = txOutWithContext{
@@ -137,17 +166,21 @@ func makeSortableOutputContextSlice(
 
 type sortableOutputContextSlice []txOutWithContext
 
+// Implement the sort.Interface.
 func (s sortableOutputContextSlice) Len() int      { return len(s) }
 func (s sortableOutputContextSlice) Swap(i, j int) { s[i], s[j] = s[j], s[i] }
 func (s sortableOutputContextSlice) Less(i, j int) bool {
+	// If the values are distinct, return value_i < value_j.
 	if s[i].Value != s[j].Value {
 		return s[i].Value < s[j].Value
 	}
 
+	// If the pk scripts are distinct, return pkscript_i < pkscript_j.
 	pkScriptCmp := bytes.Compare(s[i].PkScript, s[j].PkScript)
 	if pkScriptCmp != 0 {
 		return pkScriptCmp == -1
 	}
 
+	// Otherwise, compare the contexts to determine if i < j.
 	return bytes.Compare(s[i].Context, s[j].Context) == -1
 }
