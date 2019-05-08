@@ -342,14 +342,20 @@ func (f *Filter) Match(key [KeySize]byte, data []byte) (bool, error) {
 // probability) to be a member of the set represented by the filter faster than
 // calling Match() for each value individually.
 func (f *Filter) MatchAny(key [KeySize]byte, data [][]byte) (bool, error) {
-	// TODO(conner): add real heuristics to query optimization
-	switch {
+	algo, _ := Optimize(len(data), f.N())
+	switch algo {
 
-	case len(data) >= int(f.N()/2):
+	case MatchHash:
 		return f.HashMatchAny(key, data)
 
-	default:
+	case MatchZip:
 		return f.ZipMatchAny(key, data)
+
+	case MatchBlock:
+		return true, nil
+
+	default:
+		return f.HashMatchAny(key, data)
 	}
 }
 
